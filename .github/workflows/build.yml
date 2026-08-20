@@ -11,32 +11,100 @@ permissions:
 
 jobs:
   build:
+    name: Build APK
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Check files
+      - name: Extract WClient
+        shell: bash
         run: |
-          ls -la
-          test -f gradlew
-          test -f settings.gradle.kts
+          set -e
+
+          ZIP=$(find . -maxdepth 1 -type f -name "*.zip" -print -quit)
+
+          if [ -z "$ZIP" ]; then
+            echo "HATA: ZIP dosyası bulunamadı!"
+            exit 1
+          fi
+
+          echo "ZIP bulundu: $ZIP"
+
+          mkdir -p project
+          unzip -o "$ZIP" -d project
+
+          echo "=== Proje dosyaları ==="
+          find project -maxdepth 3 -type f -print
+
+      - name: Find Gradle project
+        shell: bash
+        run: |
+          set -e
+
+          GRADLEW=$(find project -type f -name "gradlew" -print -quit)
+
+          if [ -n "$GRADLEW" ]; then
+            echo "Gradle wrapper bulundu:"
+            echo "$GRADLEW"
+
+            chmod +x "$GRADLEW"
+
+            PROJECT_DIR=$(dirname "$GRADLEW")
+            echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+            echo "BUILD_TYPE=wrapper" >> "$GITHUB_ENV"
+
+          else
+            SETTINGS=$(find project -type f \
+              \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+              -print -quit)
+
+            if [ -z "$SETTINGS" ]; then
+              echo "HATA: Gradle projesi bulunamadı!"
+              exit 1
+            fi
+
+            PROJECT_DIR=$(dirname "$SETTINGS")
+            echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+            echo "BUILD_TYPE=system" >> "$GITHUB_ENV"
+          fi
 
       - name: Build APK
+        shell: bash
         run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          echo "Build klasörü: $PWD"
+
+          if [ "$BUILD_TYPE" = "wrapper" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --no-daemon
+          else
+            gradle assembleDebug --no-daemon
+          fi
+
+      - name: Find APK
+        shell: bash
+        run: |
+          echo "=== APK DOSYALARI ==="
+          find project -type f -name "*.apk" -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: APK
-          path: "**/build/outputs/apk/debug/*.apk"
+          name: WClient-APK
+          path: |
+            project/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
